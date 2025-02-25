@@ -1,91 +1,97 @@
 import os
 import weaviate
 from dotenv import load_dotenv
-from langchain.document_loaders import UnstructuredPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.vectorstores import Weaviate
 from weaviate.classes.init import Auth
 import weaviate.classes as wvc
 from langchain_weaviate import WeaviateVectorStore
 from weaviate.classes.config import Configure, Property, DataType
-from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_openai import OpenAIEmbeddings
 from langchain.llms import OpenAI
 from langchain.chains.question_answering import load_qa_chain
 from PyPDF2 import PdfReader
 
-def comp_process(pdfs, question):
-    load_dotenv()
-    llm = OpenAI()
-    wcd_url = os.environ["WCD_DEMO_URL"]
-    wcd_api_key = os.environ["WCD_DEMO_RO_KEY"]
-    
-    text = ""
-    
-    # Read all PDFs
-    for file in pdfs:
-        pdf_reader = PdfReader(file)
-        for page in pdf_reader.pages:
-            text += page.extract_text()
-            
-    # Split text into chunks
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
-    chunks = text_splitter.split_text(text=text)
-    
-    # Initialize embeddings
+# Load environment variables
+load_dotenv()
+WEAVIATE_URL = os.environ["WCD_DEMO_URL"]
+WEAVIATE_API_KEY = os.environ["WCD_DEMO_RO_KEY"]
+
+# Initialize Weaviate connection
+auth_config = weaviate.AuthApiKey(api_key=WEAVIATE_API_KEY)
+client = weaviate.connect_to_weaviate_cloud(
+    cluster_url=WEAVIATE_URL,
+    auth_credentials=auth_config
+)
+
+def store_pdfs(pdf_files):
+    """
+    Process multiple PDFs and store them in Weaviate, ensuring each PDF is stored separately.
+    """
     embeddings = OpenAIEmbeddings()
-    
-    auth_config = weaviate.AuthApiKey(api_key=wcd_api_key)
 
-    WEAVIATE_URL = wcd_url
-    try: 
-        client = weaviate.connect_to_weaviate_cloud(
-            cluster_url=WEAVIATE_URL,
-            auth_credentials=auth_config
-        )
-        
-        client.collections.delete_all()
-        client.collections.list_all()
-        client.collections.create(
-            name="Chatbot",
-            description="Documents for chatbot",
-            vectorizer_config=Configure.Vectorizer.text2vec_openai(
-                model="ada",
-                type_="text"
-            ),
-            properties=[
-                Property(
-                    name="content",
-                    data_type=DataType.TEXT,
-                    description="The content of the paragraph",
-                    skip_vectorization=False,
-                    vectorize_property_name=False
-                )
-            ]
-        )
+    # Delete the previous collection to prevent duplicate storage
+    client.collections.delete_all()
 
-        vectorstore = WeaviateVectorStore(
-            client=client,
-            index_name="Chatbot",
-            text_key="content",
-            embedding=embeddings,
-            attributes=["content"]
-        )
-        # Store chunks in Weaviate
-        vectorstore.add_texts(chunks)
+    # Create a new collection for the chatbot knowledge base
+    client.collections.create(
+        name="Chatbot",
+        description="Documents for chatbot",
+        vectorizer_config=Configure.Vectorizer.text2vec_openai(
+            model="ada",
+            type_="text"
+        ),
+        properties=[
+            Property(name="content", data_type=DataType.TEXT, description="Extracted text content"),
+            Property(name="filename", data_type=DataType.TEXT, description="PDF filename")
+        ]
+    )
 
-        # Perform similarity search
-        docs = vectorstore.similarity_search(question, k=4)
+    vectorstore = WeaviateVectorStore(
+        client=client, index_name="Chatbot", text_key="content", embedding=embeddings
+    )
 
-        # Use OpenAI to generate answers
-        read_chain = load_qa_chain(llm=llm)
-        answer = read_chain.run(input_documents=docs, question=question)
+    all_texts = []  # Store extracted texts
+    all_metadatas = []  # Store metadata (e.g., filenames)
 
-        return answer
-    
-    finally:
-        client.close()
+    for pdf in pdf_files:
+        pdf_reader = PdfReader(pdf)
+        text = ""
 
-# Query the model
-answer = comp_process(["./tes.pdf"], "What is algorithm?")
-print(answer)
+        for page in pdf_reader.pages:
+            extracted_text = page.extract_text()
+            if extracted_text:
+                text += extracted_text + "\n"
+
+        # Skip empty PDFs
+        if not text.strip():
+            continue
+
+        # Split text into chunks
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
+        chunks = text_splitter.split_text(text=text)
+
+        # Append extracted text and metadata for each PDF
+        all_texts.extend(chunks)
+        all_metadatas.extend([{"filename": pdf.filename}] * len(chunks))
+
+    # Store all chunks in Weaviate
+    vectorstore.add_texts(all_texts, metadatas=all_metadatas)
+
+    return {"message": "All PDFs successfully stored in the vector database"}
+
+
+def query_chatbot(question):
+    llm = OpenAI()
+    embeddings = OpenAIEmbeddings()
+
+    vectorstore = WeaviateVectorStore(
+        client=client, index_name="Chatbot", text_key="content", embedding=embeddings
+    )
+
+    docs = vectorstore.similarity_search(question, k=4)
+
+    read_chain = load_qa_chain(llm=llm)
+    answer = read_chain.run(input_documents=docs, question=question)
+
+    return {"answer": answer}
