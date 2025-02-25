@@ -12,12 +12,10 @@ from langchain.llms import OpenAI
 from langchain.chains.question_answering import load_qa_chain
 from PyPDF2 import PdfReader
 
-# Load environment variables
 load_dotenv()
 WEAVIATE_URL = os.environ["WCD_DEMO_URL"]
 WEAVIATE_API_KEY = os.environ["WCD_DEMO_RO_KEY"]
 
-# Initialize Weaviate connection
 auth_config = weaviate.AuthApiKey(api_key=WEAVIATE_API_KEY)
 client = weaviate.connect_to_weaviate_cloud(
     cluster_url=WEAVIATE_URL,
@@ -25,15 +23,10 @@ client = weaviate.connect_to_weaviate_cloud(
 )
 
 def store_pdfs(pdf_files):
-    """
-    Process multiple PDFs and store them in Weaviate, ensuring each PDF is stored separately.
-    """
     embeddings = OpenAIEmbeddings()
 
-    # Delete the previous collection to prevent duplicate storage
     client.collections.delete_all()
 
-    # Create a new collection for the chatbot knowledge base
     client.collections.create(
         name="Chatbot",
         description="Documents for chatbot",
@@ -51,8 +44,8 @@ def store_pdfs(pdf_files):
         client=client, index_name="Chatbot", text_key="content", embedding=embeddings
     )
 
-    all_texts = []  # Store extracted texts
-    all_metadatas = []  # Store metadata (e.g., filenames)
+    all_texts = []  
+    all_metadatas = [] 
 
     for pdf in pdf_files:
         pdf_reader = PdfReader(pdf)
@@ -63,19 +56,15 @@ def store_pdfs(pdf_files):
             if extracted_text:
                 text += extracted_text + "\n"
 
-        # Skip empty PDFs
         if not text.strip():
             continue
 
-        # Split text into chunks
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
         chunks = text_splitter.split_text(text=text)
 
-        # Append extracted text and metadata for each PDF
         all_texts.extend(chunks)
         all_metadatas.extend([{"filename": pdf.filename}] * len(chunks))
 
-    # Store all chunks in Weaviate
     vectorstore.add_texts(all_texts, metadatas=all_metadatas)
 
     return {"message": "All PDFs successfully stored in the vector database"}
