@@ -1,24 +1,12 @@
-import os
 import weaviate
-from weaviate import WeaviateClient
-from weaviate.classes.init import AdditionalConfig, Timeout
-from weaviate import connect
 from dotenv import load_dotenv
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.vectorstores import Weaviate
-from weaviate.classes.init import Auth
-import weaviate.classes as wvc
-from langchain_weaviate import WeaviateVectorStore
 from weaviate.classes.config import Configure, Property, DataType
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_weaviate import WeaviateVectorStore
 from langchain_openai import OpenAIEmbeddings
-from langchain.llms import OpenAI
+from langchain_community.llms import OpenAI
 from langchain.chains.question_answering import load_qa_chain
-from PyPDF2 import PdfReader
-
-# WEAVIATE_URL = os.environ["WCD_DEMO_URL"]
-# WEAVIATE_API_KEY = os.environ["WCD_DEMO_RO_KEY"]
-# auth_config = weaviate.AuthApiKey(api_key=WEAVIATE_API_KEY)
-# client = weaviate.Client(url=Config.WEAVIATE_URL, auth_client_secret=None)
+from pypdf import PdfReader
 
 load_dotenv()
 
@@ -71,7 +59,7 @@ def store_pdfs(pdf_files):
 
     return {"message": "All PDFs successfully stored in the vector database"}
 
-def query_chatbot(question):
+def query_chatbot(question, chat_history):
     llm = OpenAI()
     embeddings = OpenAIEmbeddings()
 
@@ -79,7 +67,20 @@ def query_chatbot(question):
         client=client, index_name="Chatbot", text_key="content", embedding=embeddings
     )
 
-    docs = vectorstore.similarity_search(question, k=4)
+    # Add previous conversation context
+    context = " ".join([f"Q: {item['question']} A: {item['answer']}" for item in chat_history])
+    full_query = f"Context: {context} Current Question: {question}"
+
+    chatbot_collection = client.collections.get("Chatbot")
+    
+    # Perform the query
+    search_results = chatbot_collection.query.near_vector(
+        near_vector=embeddings.embed_query(full_query),
+        distance=0.7,  
+        limit=2
+    )
+
+    docs = vectorstore.similarity_search(full_query, k=4)
 
     read_chain = load_qa_chain(llm=llm)
     answer = read_chain.run(input_documents=docs, question=question)

@@ -3,6 +3,9 @@ from backend import store_pdfs, query_chatbot
 
 app = Flask(__name__)
 
+# In-memory storage for session-based memory
+conversation_memory = {}
+
 @app.route("/upload", methods=["POST"])
 def upload_pdf():
     if "files" not in request.files:
@@ -18,17 +21,26 @@ def upload_pdf():
 @app.route("/query", methods=["POST"])
 def query():
     data = request.get_json()
-    questions = data.get("questions")
-    
-    if not questions or not isinstance(questions, list):
-        return jsonify({"error": "No questions provided or format is incorrect"}), 400
-    
-    responses = {}
-    for question in questions:
-        answer = query_chatbot(question)  
-        responses[question] = answer
+    session_id = data.get("session_id")
+    question = data.get("question")
 
-    return jsonify(responses)
+    if not question or not session_id:
+        return jsonify({"error": "Missing session_id or question"}), 400
+
+    # Initialize session memory if not exists
+    if session_id not in conversation_memory:
+        conversation_memory[session_id] = []
+
+    # Retrieve past interactions
+    chat_history = conversation_memory[session_id]
+
+    # Get chatbot response
+    answer = query_chatbot(question, chat_history)
+
+    # Store the question-answer pair in session memory
+    conversation_memory[session_id].append({"question": question, "answer": answer["answer"]})
+
+    return jsonify({"session_id": session_id, "answer": answer["answer"]})
 
 if __name__ == "__main__":
     app.run(debug=True)
