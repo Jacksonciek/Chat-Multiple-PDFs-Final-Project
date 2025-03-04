@@ -1,6 +1,7 @@
 import os
 import weaviate
 from weaviate import WeaviateClient
+from weaviate.classes.init import AdditionalConfig, Timeout
 from weaviate import connect
 from dotenv import load_dotenv
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -21,9 +22,7 @@ from PyPDF2 import PdfReader
 
 load_dotenv()
 
-client = weaviate.connect_to_local(
-        skip_init_checks=True
-    )
+client = weaviate.connect_to_local()
 
 def store_pdfs(pdf_files):
     embeddings = OpenAIEmbeddings()
