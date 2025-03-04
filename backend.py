@@ -1,5 +1,7 @@
 import os
 import weaviate
+from weaviate import WeaviateClient
+from weaviate import connect
 from dotenv import load_dotenv
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.vectorstores import Weaviate
@@ -12,15 +14,16 @@ from langchain.llms import OpenAI
 from langchain.chains.question_answering import load_qa_chain
 from PyPDF2 import PdfReader
 
-load_dotenv()
-WEAVIATE_URL = os.environ["WCD_DEMO_URL"]
-WEAVIATE_API_KEY = os.environ["WCD_DEMO_RO_KEY"]
+# WEAVIATE_URL = os.environ["WCD_DEMO_URL"]
+# WEAVIATE_API_KEY = os.environ["WCD_DEMO_RO_KEY"]
+# auth_config = weaviate.AuthApiKey(api_key=WEAVIATE_API_KEY)
+# client = weaviate.Client(url=Config.WEAVIATE_URL, auth_client_secret=None)
 
-auth_config = weaviate.AuthApiKey(api_key=WEAVIATE_API_KEY)
-client = weaviate.connect_to_weaviate_cloud(
-    cluster_url=WEAVIATE_URL,
-    auth_credentials=auth_config
-)
+load_dotenv()
+
+client = weaviate.connect_to_local(
+        skip_init_checks=True
+    )
 
 def store_pdfs(pdf_files):
     embeddings = OpenAIEmbeddings()
@@ -68,7 +71,6 @@ def store_pdfs(pdf_files):
     vectorstore.add_texts(all_texts, metadatas=all_metadatas)
 
     return {"message": "All PDFs successfully stored in the vector database"}
-
 
 def query_chatbot(question):
     llm = OpenAI()

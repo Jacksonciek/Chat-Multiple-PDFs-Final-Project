@@ -15,7 +15,6 @@ def upload_pdf():
     response = store_pdfs(files) 
     return jsonify(response)
 
-
 @app.route("/query", methods=["POST"])
 def query():
     data = request.get_json()
