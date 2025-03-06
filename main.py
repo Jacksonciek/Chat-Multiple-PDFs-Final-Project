@@ -1,10 +1,11 @@
 from flask import Flask, request, jsonify
 from backend import store_pdfs, query_chatbot
+from langchain.memory import ConversationBufferMemory
+from langchain.schema import HumanMessage, AIMessage
 
 app = Flask(__name__)
 
-# In-memory storage for session-based memory
-conversation_memory = {}
+conversation_memory = {}  
 
 @app.route("/upload", methods=["POST"])
 def upload_pdf():
@@ -27,18 +28,15 @@ def query():
     if not question or not session_id:
         return jsonify({"error": "Missing session_id or question"}), 400
 
-    # Initialize session memory if not exists
     if session_id not in conversation_memory:
-        conversation_memory[session_id] = []
+        conversation_memory[session_id] = ConversationBufferMemory()
 
-    # Retrieve past interactions
-    chat_history = conversation_memory[session_id]
+    memory = conversation_memory[session_id]
 
-    # Get chatbot response
-    answer = query_chatbot(question, chat_history)
+    answer = query_chatbot(question, session_id, memory)
 
-    # Store the question-answer pair in session memory
-    conversation_memory[session_id].append({"question": question, "answer": answer["answer"]})
+    memory.chat_memory.add_message(HumanMessage(content=question))
+    memory.chat_memory.add_message(AIMessage(content=answer["answer"]))
 
     return jsonify({"session_id": session_id, "answer": answer["answer"]})
 
