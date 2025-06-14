@@ -2,8 +2,6 @@ import weaviate
 from dotenv import load_dotenv
 from weaviate.classes.config import Configure, Property, DataType
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.memory import ConversationBufferMemory
-from langchain.schema import HumanMessage, AIMessage
 from langchain_weaviate import WeaviateVectorStore
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.llms import OpenAI
@@ -14,7 +12,7 @@ load_dotenv()
 
 client = weaviate.connect_to_local()
 
-def store_pdfs(pdf_files):
+def store_pdf(pdf_files):
     embeddings = OpenAIEmbeddings()
 
     client.collections.delete_all()
@@ -62,25 +60,7 @@ def store_pdfs(pdf_files):
 
     return {"message": "All PDFs successfully stored in the vector database"}
 
-def store_conversation(question, answer):
-    embeddings = OpenAIEmbeddings()
-    vectorstore = WeaviateVectorStore(
-        client=client, index_name="Chatbot", text_key="content", embedding=embeddings
-    )
-
-    conversation_texts = [
-        f"User: {question}",
-        f"Chatbot: {answer}"
-    ]
-
-    conversation_metadata = [
-        {"source": "conversation"},
-        {"source": "conversation"}
-    ]
-
-    vectorstore.add_texts(conversation_texts, metadatas=conversation_metadata)
-
-def query_chatbot(question, session_id, memory):
+def query_chatbot(question):
     llm = OpenAI()
     embeddings = OpenAIEmbeddings()
 
@@ -88,23 +68,12 @@ def query_chatbot(question, session_id, memory):
         client=client, index_name="Chatbot", text_key="content", embedding=embeddings
     )
 
-    chatbot_collection = client.collections.get("Chatbot")
+    # Simple similarity search without memory context
+    docs = vectorstore.similarity_search(question, k=4)
 
-    stored_messages = memory.chat_memory.messages
-    context = " ".join([f"Q: {msg.content}" if isinstance(msg, HumanMessage) else f"A: {msg.content}" for msg in stored_messages])
-    full_query = f"Context: {context} Current Question: {question}"
-
-    search_results = chatbot_collection.query.near_vector(
-        near_vector=embeddings.embed_query(full_query),
-        distance=0.7,  
-        limit=4  
-    )
-
-    docs = vectorstore.similarity_search(full_query, k=4)
-
+    if not docs:
+        return {"answer": "I couldn't find relevant information in the uploaded PDF to answer your question."}
     read_chain = load_qa_chain(llm=llm)
     answer = read_chain.run(input_documents=docs, question=question)
-
-    store_conversation(question, answer)
-
+    
     return {"answer": answer}
