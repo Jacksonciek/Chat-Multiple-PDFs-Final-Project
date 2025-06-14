@@ -12,19 +12,31 @@ def upload_pdf():
     if not files or any(f.filename == "" for f in files):
         return jsonify({"error": "No selected files"}), 400
 
-    response = store_pdfs(files) 
+    for file in files:
+        if not file.filename.lower().endswith('.pdf'):
+            return jsonify({"error": "Only PDF files are allowed"}), 400
+
+    response = store_pdf(files) 
     return jsonify(response)
 
 @app.route("/query", methods=["POST"])
 def query():
     data = request.get_json()
-    question = data.get("question")
+    questions = data.get("questions")  # Sekarang menerima array pertanyaan
 
-    if not question:
-        return jsonify({"error": "Missing question"}), 400
+    if not questions or not isinstance(questions, list):
+        return jsonify({"error": "Missing questions array or questions is not a list"}), 400
 
-    answer = query_chatbot(question)
-    return jsonify({"answer": answer["answer"]})
+    answers = []
+    for question in questions:
+        if not question or not isinstance(question, str):
+            answers.append({"question": question, "answer": "Invalid question format"})
+            continue
+        
+        answer = query_chatbot(question)  # Tidak perlu session_id dan memory lagi
+        answers.append({"question": question, "answer": answer["answer"]})
+
+    return jsonify({"answers": answers})
 
 if __name__ == "__main__":
     app.run(debug=True)

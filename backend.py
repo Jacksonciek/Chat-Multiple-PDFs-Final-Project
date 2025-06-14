@@ -12,24 +12,22 @@ load_dotenv()
 
 client = weaviate.connect_to_local()
 
-def store_pdf(pdf_file):
+def store_pdf(pdf_files):
     embeddings = OpenAIEmbeddings()
 
-    # Delete existing collections
     client.collections.delete_all()
 
-    # Create new collection
     client.collections.create(
         name="Chatbot",
-        description="Documents for chatbot",
+        description="Documents and Conversations for chatbot",
         vectorizer_config=Configure.Vectorizer.text2vec_openai(
             model="ada",
             type_="text"
         ),
         properties=[
             Property(name="content", data_type=DataType.TEXT, description="Extracted text content"),
-            Property(name="source", data_type=DataType.TEXT, description="Source type: pdf"),
-            Property(name="filename", data_type=DataType.TEXT, description="PDF filename")
+            Property(name="source", data_type=DataType.TEXT, description="Source type: 'pdf' or 'conversation'"),
+            Property(name="filename", data_type=DataType.TEXT, description="PDF filename (if applicable)")
         ]
     )
 
@@ -37,29 +35,30 @@ def store_pdf(pdf_file):
         client=client, index_name="Chatbot", text_key="content", embedding=embeddings
     )
 
-    # Process single PDF file
-    pdf_reader = PdfReader(pdf_file)
-    text = ""
+    all_texts = []  
+    all_metadatas = [] 
 
-    for page in pdf_reader.pages:
-        extracted_text = page.extract_text()
-        if extracted_text:
-            text += extracted_text + "\n"
+    for pdf in pdf_files:
+        pdf_reader = PdfReader(pdf)
+        text = ""
 
-    if not text.strip():
-        return {"error": "No text could be extracted from the PDF"}
+        for page in pdf_reader.pages:
+            extracted_text = page.extract_text()
+            if extracted_text:
+                text += extracted_text + "\n"
 
-    # Split text into chunks
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
-    chunks = text_splitter.split_text(text=text)
+        if not text.strip():
+            continue
 
-    # Create metadata for all chunks
-    metadatas = [{"source": "pdf", "filename": pdf_file.filename}] * len(chunks)
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
+        chunks = text_splitter.split_text(text=text)
 
-    # Store in vector database
-    vectorstore.add_texts(chunks, metadatas=metadatas)
+        all_texts.extend(chunks)
+        all_metadatas.extend([{"source": "pdf", "filename": pdf.filename}] * len(chunks))
 
-    return {"message": f"PDF '{pdf_file.filename}' successfully stored in the vector database"}
+    vectorstore.add_texts(all_texts, metadatas=all_metadatas)
+
+    return {"message": "All PDFs successfully stored in the vector database"}
 
 def query_chatbot(question):
     llm = OpenAI()
@@ -74,8 +73,6 @@ def query_chatbot(question):
 
     if not docs:
         return {"answer": "I couldn't find relevant information in the uploaded PDF to answer your question."}
-
-    # Generate answer using QA chain
     read_chain = load_qa_chain(llm=llm)
     answer = read_chain.run(input_documents=docs, question=question)
     
