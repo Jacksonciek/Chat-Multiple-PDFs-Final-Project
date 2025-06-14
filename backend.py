@@ -2,8 +2,6 @@ import weaviate
 from dotenv import load_dotenv
 from weaviate.classes.config import Configure, Property, DataType
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.memory import ConversationBufferMemory
-from langchain.schema import HumanMessage, AIMessage
 from langchain_weaviate import WeaviateVectorStore
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.llms import OpenAI
@@ -14,22 +12,24 @@ load_dotenv()
 
 client = weaviate.connect_to_local()
 
-def store_pdfs(pdf_files):
+def store_pdf(pdf_file):
     embeddings = OpenAIEmbeddings()
 
+    # Delete existing collections
     client.collections.delete_all()
 
+    # Create new collection
     client.collections.create(
         name="Chatbot",
-        description="Documents and Conversations for chatbot",
+        description="Documents for chatbot",
         vectorizer_config=Configure.Vectorizer.text2vec_openai(
             model="ada",
             type_="text"
         ),
         properties=[
             Property(name="content", data_type=DataType.TEXT, description="Extracted text content"),
-            Property(name="source", data_type=DataType.TEXT, description="Source type: 'pdf' or 'conversation'"),
-            Property(name="filename", data_type=DataType.TEXT, description="PDF filename (if applicable)")
+            Property(name="source", data_type=DataType.TEXT, description="Source type: pdf"),
+            Property(name="filename", data_type=DataType.TEXT, description="PDF filename")
         ]
     )
 
@@ -37,50 +37,31 @@ def store_pdfs(pdf_files):
         client=client, index_name="Chatbot", text_key="content", embedding=embeddings
     )
 
-    all_texts = []  
-    all_metadatas = [] 
+    # Process single PDF file
+    pdf_reader = PdfReader(pdf_file)
+    text = ""
 
-    for pdf in pdf_files:
-        pdf_reader = PdfReader(pdf)
-        text = ""
+    for page in pdf_reader.pages:
+        extracted_text = page.extract_text()
+        if extracted_text:
+            text += extracted_text + "\n"
 
-        for page in pdf_reader.pages:
-            extracted_text = page.extract_text()
-            if extracted_text:
-                text += extracted_text + "\n"
+    if not text.strip():
+        return {"error": "No text could be extracted from the PDF"}
 
-        if not text.strip():
-            continue
+    # Split text into chunks
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
+    chunks = text_splitter.split_text(text=text)
 
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
-        chunks = text_splitter.split_text(text=text)
+    # Create metadata for all chunks
+    metadatas = [{"source": "pdf", "filename": pdf_file.filename}] * len(chunks)
 
-        all_texts.extend(chunks)
-        all_metadatas.extend([{"source": "pdf", "filename": pdf.filename}] * len(chunks))
+    # Store in vector database
+    vectorstore.add_texts(chunks, metadatas=metadatas)
 
-    vectorstore.add_texts(all_texts, metadatas=all_metadatas)
+    return {"message": f"PDF '{pdf_file.filename}' successfully stored in the vector database"}
 
-    return {"message": "All PDFs successfully stored in the vector database"}
-
-def store_conversation(question, answer):
-    embeddings = OpenAIEmbeddings()
-    vectorstore = WeaviateVectorStore(
-        client=client, index_name="Chatbot", text_key="content", embedding=embeddings
-    )
-
-    conversation_texts = [
-        f"User: {question}",
-        f"Chatbot: {answer}"
-    ]
-
-    conversation_metadata = [
-        {"source": "conversation"},
-        {"source": "conversation"}
-    ]
-
-    vectorstore.add_texts(conversation_texts, metadatas=conversation_metadata)
-
-def query_chatbot(question, session_id, memory):
+def query_chatbot(question):
     llm = OpenAI()
     embeddings = OpenAIEmbeddings()
 
@@ -88,23 +69,14 @@ def query_chatbot(question, session_id, memory):
         client=client, index_name="Chatbot", text_key="content", embedding=embeddings
     )
 
-    chatbot_collection = client.collections.get("Chatbot")
+    # Simple similarity search without memory context
+    docs = vectorstore.similarity_search(question, k=4)
 
-    stored_messages = memory.chat_memory.messages
-    context = " ".join([f"Q: {msg.content}" if isinstance(msg, HumanMessage) else f"A: {msg.content}" for msg in stored_messages])
-    full_query = f"Context: {context} Current Question: {question}"
+    if not docs:
+        return {"answer": "I couldn't find relevant information in the uploaded PDF to answer your question."}
 
-    search_results = chatbot_collection.query.near_vector(
-        near_vector=embeddings.embed_query(full_query),
-        distance=0.7,  
-        limit=4  
-    )
-
-    docs = vectorstore.similarity_search(full_query, k=4)
-
+    # Generate answer using QA chain
     read_chain = load_qa_chain(llm=llm)
     answer = read_chain.run(input_documents=docs, question=question)
-
-    store_conversation(question, answer)
-
+    
     return {"answer": answer}
